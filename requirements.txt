@@ -1,0 +1,20 @@
+# ──────────────────────────────────────────────
+# Gocase · Dashboard de Frete & Importações
+# requirements.txt
+# ──────────────────────────────────────────────
+
+# Dashboard
+streamlit>=1.35.0
+
+# Dados
+pandas>=2.0.0
+numpy>=1.26.0
+
+# Gráficos
+plotly>=5.20.0
+
+# Excel (leitura/escrita da planilha)
+openpyxl>=3.1.0
+
+# Pipeline — opcional, para linha de tendência nos gráficos
+# statsmodels>=0.14.0
