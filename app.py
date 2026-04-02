@@ -80,7 +80,6 @@ hr { border-color: rgba(255,255,255,0.08) !important; }
 # ──────────────────────────────────────────────
 # DADOS
 # ──────────────────────────────────────────────
-# Caminho dos CSVs — funciona tanto local (output/) quanto no Streamlit Cloud (raiz)
 OUTPUT = Path("output") if Path("output").exists() else Path(".")
 
 @st.cache_data(ttl=300)
@@ -95,9 +94,8 @@ def load_data():
     for _c in ["etd","eta","data_pi","data_embarque","data_chegada"]:
         if _c in fato.columns:
             fato[_c] = pd.to_datetime(fato[_c], dayfirst=True, errors="coerce")
-    cont = read("dim_containers")   # gerado pelo pipeline_containers.py
+    cont = read("dim_containers")
 
-    # Se dim_containers não existir, tenta gerar na hora
     if cont.empty:
         try:
             from pipeline_containers import calcular_frete_container, detalhe_container_bl
@@ -132,7 +130,6 @@ with st.sidebar:
     st.markdown("### 🚢 Gocase · Frete")
     st.divider()
 
-    # Filtro ano (ETD)
     if not fato_raw.empty and "etd" in fato_raw.columns:
         fato_raw["ano"] = pd.to_datetime(fato_raw["etd"], errors="coerce").dt.year
         anos = sorted(fato_raw["ano"].dropna().unique().astype(int).tolist())
@@ -140,41 +137,34 @@ with st.sidebar:
     else:
         anos_sel = []
 
-    # Filtro supplier
     if not fato_raw.empty and "supplier" in fato_raw.columns:
         sups = sorted(fato_raw["supplier"].dropna().unique().tolist())
         sups_sel = st.multiselect("Fornecedor", sups, default=sups)
     else:
         sups_sel = []
 
-    # Filtro modal
     if not fato_raw.empty and "modal" in fato_raw.columns:
         modais = sorted(fato_raw["modal"].dropna().unique().tolist())
         modais_sel = st.multiselect("Modal", modais, default=modais)
     else:
         modais_sel = []
 
-    # Filtro tipo container
     if not cont_raw.empty and "tipo" in cont_raw.columns:
         tipos = sorted(cont_raw["tipo"].dropna().unique().tolist())
         tipos_sel = st.multiselect("Tipo Container", tipos, default=tipos)
     else:
         tipos_sel = []
 
-    # Filtro por Nº Container
     if not cont_raw.empty and "num_container" in cont_raw.columns:
         conts_disp = sorted(cont_raw["num_container"].dropna().unique().tolist())
-        conts_sel = st.multiselect("Nº Container", conts_disp, default=[],
-                                   placeholder="Todos")
+        conts_sel = st.multiselect("Nº Container", conts_disp, default=[], placeholder="Todos")
     else:
         conts_sel = []
 
-    # Filtro por Processo (ref_bl)
     col_proc = next((c for c in ["ref_bl","processo","ref_completa","no_pi"] if c in fato_raw.columns), None)
     if col_proc:
         procs_disp = sorted(fato_raw[col_proc].dropna().unique().tolist())
-        procs_sel = st.multiselect("Processo / BL", procs_disp, default=[],
-                                   placeholder="Todos")
+        procs_sel = st.multiselect("Processo / BL", procs_disp, default=[], placeholder="Todos")
     else:
         procs_sel = []
 
@@ -204,7 +194,6 @@ if conts_sel and "num_container" in cont_det.columns:
 if procs_sel and col_proc and "ref_bl" in cont_det.columns:
     cont_det = cont_det[cont_det["ref_bl"].isin(procs_sel)]
 
-# ── Filtro temporal >= 2025 (aplicado a todos os dataframes) ─────────────
 _col_data_fato = next((c for c in ["etd","data_etd"] if c in fato.columns), None)
 if _col_data_fato:
     fato[_col_data_fato] = pd.to_datetime(fato[_col_data_fato], dayfirst=True, errors="coerce")
@@ -216,24 +205,20 @@ if _col_data_cont:
     cont_det = cont_det[cont_det[_col_data_cont].dt.year >= 2025].copy()
 
 # ──────────────────────────────────────────────
-# NORMALIZAR NOMES DE COLUNAS
-# Mapeia variações para nomes padrão usados no dashboard
+# NORMALIZAR COLUNAS
 # ──────────────────────────────────────────────
 def _find_col(df, candidates):
-    """Retorna o primeiro nome de candidatos que existir no df, ou None."""
     for c in candidates:
         if c in df.columns:
             return c
     return None
 
 def _rename_if_needed(df, candidates, target):
-    """Renomeia a primeira coluna encontrada em candidates para target."""
     src = _find_col(df, candidates)
     if src and src != target:
         df = df.rename(columns={src: target})
     return df
 
-# Normalizar fato
 fato = _rename_if_needed(fato, ["valor_pi","valor_produto","valor_total_pi","total_pi","valor_pi_usd","fob","valor_fob"], "valor_pi")
 fato = _rename_if_needed(fato, ["frete","frete_usd","valor_frete","freight","$ frete"], "frete")
 fato = _rename_if_needed(fato, ["supplier","fornecedor","vendor","fabricante"], "supplier")
@@ -242,7 +227,6 @@ fato = _rename_if_needed(fato, ["etd","data_etd","etd_china","data_embarque","em
 fato = _rename_if_needed(fato, ["eta","data_entrega","eta_santos","data_chegada","chegada"], "eta")
 fato = _rename_if_needed(fato, ["ref_bl","processo","no_pi","ref_completa","ref_trading"], "ref_bl")
 
-# Normalizar cont
 cont = _rename_if_needed(cont, ["num_container","container","nº container","numero_container"], "num_container")
 cont = _rename_if_needed(cont, ["frete_total_cont","frete_container","frete_total"], "frete_total_cont")
 cont = _rename_if_needed(cont, ["valor_pi_total","valor_pi","total_pi"], "valor_pi_total")
@@ -277,15 +261,11 @@ with _col_btn:
 
 st.divider()
 
-
-
-
 # ──────────────────────────────────────────────
-# NOTÍCIAS — TICKER ANIMADO
+# TICKER DE NOTÍCIAS
 # ──────────────────────────────────────────────
 import xml.etree.ElementTree as ET
 import urllib.request
-import re as _re
 
 FEEDS_NEWS = [
     "https://www.comexdobrasil.com/feed/",
@@ -318,7 +298,6 @@ if _noticias_ticker:
         f'<a href="{n["link"]}" target="_blank" style="color:#FFFFFF;text-decoration:none;font-weight:600;">{n["titulo"]}</a>'
         for n in _noticias_ticker
     )
-    # Duplicar para loop contínuo sem pausa
     _items_html_dup = _items_html + "   ●   " + _items_html
 
     st.markdown(f"""
@@ -333,11 +312,11 @@ if _noticias_ticker:
     display:flex;
     align-items:center;
 ">
-    <span style="color:#E8571A;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-right:16px;flex-shrink:0;">
+    <span style="color:#E8571A;font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-right:16px;flex-shrink:0;">
         📰 COMEX
     </span>
     <div style="overflow:hidden;flex:1;">
-        <span style="display:inline-block;animation:ticker 55s linear infinite;font-size:13px;color:#FFFFFF;">
+        <span style="display:inline-block;animation:ticker 55s linear infinite;font-size:14px;color:#FFFFFF;">
             {_items_html_dup}
         </span>
     </div>
@@ -364,10 +343,9 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 ])
 
 # ══════════════════════════════════════════════
-# TAB 1 — VISÃO GERAL DE FRETE
+# TAB 1 — VISÃO GERAL
 # ══════════════════════════════════════════════
 with tab1:
-    # KPIs principais
     frete_total = safe(fato, "frete")
     pi_total    = safe(fato, "valor_pi")
     pct_frete   = frete_total / pi_total if pi_total else np.nan
@@ -375,8 +353,6 @@ with tab1:
     n_cont      = len(cont)
     frete_teu   = safe(cont, "frete_por_teu", np.mean)
 
-    # ── KPIs com delta vs mês anterior ────────────────────────────────────
-    # Calcular mês atual e anterior para deltas
     if "etd" in fato.columns and "frete" in fato.columns:
         _fato_dt = fato.copy()
         _fato_dt["_mes"] = pd.to_datetime(_fato_dt["etd"], errors="coerce").dt.to_period("M")
@@ -389,37 +365,36 @@ with tab1:
             _frete_atual = _fat_atual["frete"].sum()
             _frete_ant   = _fat_ant["frete"].sum()
             _delta_frete = _frete_atual - _frete_ant
-            _delta_pct   = (_fat_atual["frete"].sum() / _fat_atual["valor_pi"].sum() if "valor_pi" in _fat_atual.columns and _fat_atual["valor_pi"].sum() > 0 else np.nan)
-            _delta_pct_ant = (_fat_ant["frete"].sum() / _fat_ant["valor_pi"].sum() if "valor_pi" in _fat_ant.columns and _fat_ant["valor_pi"].sum() > 0 else np.nan)
+            _delta_pct   = (_fat_atual["frete"].sum() / _fat_atual["valor_pi"].sum()
+                            if "valor_pi" in _fat_atual.columns and _fat_atual["valor_pi"].sum() > 0 else np.nan)
+            _delta_pct_ant = (_fat_ant["frete"].sum() / _fat_ant["valor_pi"].sum()
+                              if "valor_pi" in _fat_ant.columns and _fat_ant["valor_pi"].sum() > 0 else np.nan)
         else:
             _delta_frete = None; _delta_pct = None; _delta_pct_ant = None
-            _frete_atual = None
     else:
         _delta_frete = None; _delta_pct = None; _delta_pct_ant = None
-        _frete_atual = None
 
-    # Economia potencial: diferença entre frete mais caro e mais barato por TEU
     if not cont.empty and "frete_por_teu" in cont.columns:
         _max_teu = cont["frete_por_teu"].max()
         _min_teu = cont["frete_por_teu"].min()
-        _mean_teu = cont["frete_por_teu"].mean()
         _teu_total = cont["teu"].sum() if "teu" in cont.columns else len(cont)
         _economia_pot = (_max_teu - _min_teu) * _teu_total
     else:
-        _max_teu = _min_teu = _mean_teu = _teu_total = _economia_pot = None
+        _economia_pot = None
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Frete Total", usd(frete_total),
               delta=usd(_delta_frete) + " vs mês ant." if _delta_frete is not None else None,
               delta_color="inverse")
     k2.metric("% Frete / Valor PI", pct(pct_frete),
-              delta=f"{(_delta_pct - _delta_pct_ant)*100:+.1f}pp vs mês ant." if _delta_pct and _delta_pct_ant else None,
+              delta=f"{(_delta_pct - _delta_pct_ant)*100:+.1f}pp vs mês ant."
+                    if _delta_pct and _delta_pct_ant else None,
               delta_color="inverse")
     k3.metric("Frete Médio / TEU", usd(frete_teu))
     k4.metric("Containers", f"{n_cont:,}")
     k5.metric("Processos", f"{n_processos:,}")
     k6.metric("💡 Economia Potencial", usd(_economia_pot) if _economia_pot else "—",
-              help="Diferença de custo entre o container mais caro e mais barato por TEU, extrapolada para o volume total. Potencial de economia ao padronizar rotas/armadores.")
+              help="Diferença de custo entre o container mais caro e mais barato por TEU × volume total.")
 
     st.divider()
 
@@ -427,25 +402,31 @@ with tab1:
 
     with c1:
         st.markdown("#### Frete Total por Mês (ETD)")
+        st.caption("Período filtrado por ETD · valores em USD")
         if "etd" in fato.columns and "frete" in fato.columns:
             df_mes = fato.copy()
             df_mes["mes"] = pd.to_datetime(df_mes["etd"], errors="coerce").dt.to_period("M").astype(str)
             df_mes = df_mes.groupby("mes")["frete"].sum().reset_index().sort_values("mes")
+            media_mes = df_mes["frete"].mean()
             escala_log = st.toggle("Escala logarítmica", value=False, key="log_mes")
-            fig = go.Figure(go.Bar(
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
                 x=df_mes["mes"], y=df_mes["frete"],
                 marker_color=ORANGE,
                 text=df_mes["frete"].apply(usd),
-                textposition="auto",
+                textposition="outside",
                 textfont=dict(size=9),
             ))
+            fig.add_hline(y=media_mes, line_dash="dot", line_color=MUTED,
+                          annotation_text=f"Média {usd(media_mes)}",
+                          annotation_font_color=MUTED)
             fig.update_layout(
                 template=TEMPLATE, height=320,
                 xaxis_title="", yaxis_title="USD",
                 yaxis=dict(
                     type="log" if escala_log else "linear",
                     tickformat="$,.0f",
-                    range=[0, 150000] if not escala_log else None,
+                    range=[0, df_mes["frete"].max() * 1.30] if not escala_log else None,
                 ),
                 bargap=0.3,
             )
@@ -454,14 +435,27 @@ with tab1:
             st.info("Coluna 'etd' ou 'frete' não encontrada.")
 
     with c2:
+        # MELHORIA: donut → barras horizontais (mais legível)
         st.markdown("#### Frete por Modal")
+        st.caption("Participação % no frete total")
         if "modal" in fato.columns and "frete" in fato.columns:
             df_modal = fato.groupby("modal")["frete"].sum().reset_index()
-            fig = px.pie(df_modal, values="frete", names="modal",
-                         color_discrete_sequence=[ORANGE, NAVY, GREEN, PURPLE, TEAL],
-                         hole=0.55)
-            fig.update_traces(textinfo="label+percent", textfont_size=12)
-            fig.update_layout(template=TEMPLATE, height=320, showlegend=False)
+            df_modal["pct"] = df_modal["frete"] / df_modal["frete"].sum()
+            df_modal = df_modal.sort_values("frete", ascending=True)
+            fig = go.Figure(go.Bar(
+                x=df_modal["frete"],
+                y=df_modal["modal"],
+                orientation="h",
+                marker_color=[ORANGE, TEAL, GREEN, PURPLE, BLUE][:len(df_modal)],
+                text=df_modal.apply(lambda r: f"{usd(r['frete'])}  ({r['pct']*100:.1f}%)", axis=1),
+                textposition="outside",
+                textfont=dict(size=11),
+            ))
+            fig.update_layout(
+                template=TEMPLATE, height=320,
+                xaxis=dict(tickformat="$,.0f", range=[0, df_modal["frete"].max() * 1.55]),
+                xaxis_title="", yaxis_title="",
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Dados de modal não disponíveis.")
@@ -472,23 +466,30 @@ with tab1:
 
     with c3:
         st.markdown("#### % Frete / PI por Fornecedor")
+        st.caption("Top 10 · mediana como referência")
         if "supplier" in fato.columns and "frete" in fato.columns and "valor_pi" in fato.columns:
             df_sup = fato.groupby("supplier").agg(
                 frete=("frete","sum"), pi=("valor_pi","sum")
             ).reset_index()
             df_sup["pct"] = df_sup["frete"] / df_sup["pi"]
+            _mediana_pct = df_sup["pct"].median()
             df_sup = df_sup.sort_values("pct", ascending=True).tail(10)
             fig = go.Figure(go.Bar(
                 x=df_sup["pct"], y=df_sup["supplier"],
-                orientation="h", marker_color=PURPLE,
+                orientation="h",
+                marker_color=[RED if x > _mediana_pct else GREEN for x in df_sup["pct"]],
                 text=df_sup["pct"].apply(pct), textposition="outside",
             ))
+            fig.add_vline(x=_mediana_pct, line_dash="dot", line_color=MUTED,
+                          annotation_text=f"Mediana {pct(_mediana_pct)}",
+                          annotation_font_color=MUTED)
             fig.update_layout(template=TEMPLATE, height=300,
                               xaxis=dict(tickformat=".0%"), xaxis_title="")
             st.plotly_chart(fig, use_container_width=True)
 
     with c4:
         st.markdown("#### Frete Médio / TEU por Tipo")
+        st.caption("Média · container 20' vs 40'")
         if not cont.empty and "tipo" in cont.columns and "frete_por_teu" in cont.columns:
             df_teu = cont.groupby("tipo")["frete_por_teu"].mean().reset_index()
             fig = go.Figure(go.Bar(
@@ -497,15 +498,20 @@ with tab1:
                 textposition="outside",
             ))
             fig.update_layout(template=TEMPLATE, height=300,
-                              yaxis=dict(tickformat="$,.0f"), xaxis_title="")
+                              yaxis=dict(tickformat="$,.0f",
+                                         range=[0, df_teu["frete_por_teu"].max() * 1.30]),
+                              xaxis_title="")
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Dados de container não disponíveis.")
 
     with c5:
         st.markdown("#### Top 5 Containers Mais Caros")
+        st.caption("Rankeado por frete total")
         if not cont.empty and "frete_total_cont" in cont.columns:
-            df_top = cont.nlargest(5, "frete_total_cont")[["num_container","tipo","frete_total_cont","frete_por_teu"]]
+            df_top = cont.nlargest(5, "frete_total_cont")[
+                ["num_container","tipo","frete_total_cont","frete_por_teu"]
+            ]
             df_top.columns = ["Container","Tipo","Frete Total","Frete/TEU"]
             df_top["Frete Total"] = df_top["Frete Total"].apply(usd)
             df_top["Frete/TEU"]   = df_top["Frete/TEU"].apply(usd)
@@ -522,29 +528,66 @@ with tab2:
         st.warning("Execute o pipeline_containers.py para gerar dim_containers.csv")
     else:
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Containers Únicos",    f"{len(cont):,}")
-        m2.metric("Frete Total",          usd(safe(cont, "frete_total_cont")))
+        m1.metric("Containers Únicos",       f"{len(cont):,}")
+        m2.metric("Frete Total",             usd(safe(cont, "frete_total_cont")))
         m3.metric("Frete Médio / Container", usd(safe(cont, "frete_total_cont", np.mean)))
-        m4.metric("Frete Médio / TEU",    usd(safe(cont, "frete_por_teu", np.mean)))
+        m4.metric("Frete Médio / TEU",       usd(safe(cont, "frete_por_teu", np.mean)))
 
         st.divider()
 
         c1, c2 = st.columns(2)
 
         with c1:
+            # MELHORIA: histograma + linha KDE + mediana
             st.markdown("#### Distribuição Frete Total por Container")
-            fig = px.histogram(
-                cont.dropna(subset=["frete_total_cont"]),
-                x="frete_total_cont", nbins=20,
-                color_discrete_sequence=[ORANGE],
-            )
-            fig.update_layout(template=TEMPLATE, height=300,
-                              xaxis=dict(tickformat="$,.0f"),
-                              xaxis_title="Frete Total (USD)", yaxis_title="Qtd Containers")
-            st.plotly_chart(fig, use_container_width=True)
+            st.caption("Linha KDE sobreposta · mediana destacada")
+            _df_hist = cont.dropna(subset=["frete_total_cont"])
+            if not _df_hist.empty:
+                _vals = _df_hist["frete_total_cont"].values
+                _mediana_hist = np.median(_vals)
+
+                # KDE manual com numpy
+                from scipy.stats import gaussian_kde as _kde  # type: ignore
+                try:
+                    _kde_fn  = _kde(_vals)
+                    _x_range = np.linspace(_vals.min(), _vals.max(), 200)
+                    _kde_y   = _kde_fn(_x_range)
+                    # Escala KDE para ficar visível junto das barras do histograma
+                    _nbins   = 20
+                    _bin_w   = (_vals.max() - _vals.min()) / _nbins
+                    _kde_y_scaled = _kde_y * len(_vals) * _bin_w
+                    has_kde  = True
+                except Exception:
+                    has_kde  = False
+
+                fig = go.Figure()
+                fig.add_trace(go.Histogram(
+                    x=_vals, nbinsx=20,
+                    marker_color=ORANGE, opacity=0.85,
+                    name="Containers",
+                ))
+                if has_kde:
+                    fig.add_trace(go.Scatter(
+                        x=_x_range, y=_kde_y_scaled,
+                        mode="lines", name="Densidade (KDE)",
+                        line=dict(color=BLUE, width=2.5),
+                    ))
+                fig.add_vline(x=_mediana_hist, line_dash="dash", line_color=YELLOW,
+                              annotation_text=f"Mediana {usd(_mediana_hist)}",
+                              annotation_font_color=YELLOW,
+                              annotation_position="top right")
+                fig.update_layout(
+                    template=TEMPLATE, height=300,
+                    xaxis=dict(tickformat="$,.0f"),
+                    xaxis_title="Frete Total (USD)", yaxis_title="Qtd Containers",
+                    legend=dict(orientation="h", y=1.1),
+                    barmode="overlay",
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
         with c2:
             st.markdown("#### Frete / TEU por Tipo de Container")
+            st.caption("Distribuição via box plot · outliers visíveis")
             if "tipo" in cont.columns and "frete_por_teu" in cont.columns:
                 fig = px.box(
                     cont.dropna(subset=["frete_por_teu","tipo"]),
@@ -560,41 +603,72 @@ with tab2:
 
         st.divider()
 
-        # Scatter: Valor PI vs Frete do Container
+        # MELHORIA: scatter + linha de regressão + R²
         st.markdown("#### Valor PI vs Frete do Container")
+        st.caption("Tamanho do ponto = TEUs · linha de tendência com R²")
         if "valor_pi_total" in cont.columns and "frete_total_cont" in cont.columns:
             df_sc = cont.dropna(subset=["valor_pi_total","frete_total_cont"])
-            fig = px.scatter(
-                df_sc,
-                x="valor_pi_total", y="frete_total_cont",
-                size="teu" if "teu" in df_sc.columns else None,
-                color="tipo" if "tipo" in df_sc.columns else None,
-                hover_data=["num_container"] if "num_container" in df_sc.columns else None,
-                color_discrete_sequence=[ORANGE, PURPLE, GREEN, TEAL],
+            if len(df_sc) >= 3:
+                _x_sc = df_sc["valor_pi_total"].values
+                _y_sc = df_sc["frete_total_cont"].values
+                _coef_sc = np.polyfit(_x_sc, _y_sc, 1)
+                _trend_sc = np.poly1d(_coef_sc)(_x_sc)
+                _ss_res = np.sum((_y_sc - _trend_sc)**2)
+                _ss_tot = np.sum((_y_sc - _y_sc.mean())**2)
+                _r2 = 1 - _ss_res/_ss_tot if _ss_tot > 0 else 0
+                _sort_idx = np.argsort(_x_sc)
 
-            )
-            fig.update_layout(template=TEMPLATE, height=350,
-                              xaxis=dict(tickformat="$,.0f"),
-                              yaxis=dict(tickformat="$,.0f"),
-                              xaxis_title="Valor PI Total (USD)",
-                              yaxis_title="Frete Total Container (USD)")
-            st.plotly_chart(fig, use_container_width=True)
+                fig = px.scatter(
+                    df_sc,
+                    x="valor_pi_total", y="frete_total_cont",
+                    size="teu" if "teu" in df_sc.columns else None,
+                    color="tipo" if "tipo" in df_sc.columns else None,
+                    hover_data=["num_container"] if "num_container" in df_sc.columns else None,
+                    color_discrete_sequence=[ORANGE, PURPLE, GREEN, TEAL],
+                )
+                fig.add_trace(go.Scatter(
+                    x=_x_sc[_sort_idx], y=_trend_sc[_sort_idx],
+                    mode="lines",
+                    name=f"Tendência (R²={_r2:.2f})",
+                    line=dict(color=BLUE, width=2.5, dash="dash"),
+                ))
+                fig.update_layout(
+                    template=TEMPLATE, height=370,
+                    xaxis=dict(tickformat="$,.0f"),
+                    yaxis=dict(tickformat="$,.0f"),
+                    xaxis_title="Valor PI Total (USD)",
+                    yaxis_title="Frete Total Container (USD)",
+                    legend=dict(orientation="h", y=-0.2),
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
-        # Tabela completa de containers
+        # MELHORIA: coluna "bls" truncada com contagem
         st.markdown("#### Todos os Containers")
-        cols_show = [c for c in ["num_container","tipo","teu","qtd_processos","bls",
-                                  "frete_total_cont","frete_por_teu","pct_frete_pi",
-                                  "etd_embarque","eta_chegada","lead_time_medio"] if c in cont.columns]
+        cols_show = [c for c in [
+            "num_container","tipo","teu","qtd_processos","bls",
+            "frete_total_cont","frete_por_teu","pct_frete_pi",
+            "etd_embarque","eta_chegada","lead_time_medio"
+        ] if c in cont.columns]
+
         df_tab = cont[cols_show].copy()
+
+        # Truncar coluna BLs
+        if "bls" in df_tab.columns:
+            df_tab["bls"] = df_tab["bls"].apply(
+                lambda x: f"{len(str(x).split('|'))} BLs" if pd.notna(x) and str(x).strip() else "—"
+            )
+
         for c in ["frete_total_cont","frete_por_teu"]:
             if c in df_tab.columns:
                 df_tab[c] = df_tab[c].apply(usd)
         if "pct_frete_pi" in df_tab.columns:
             df_tab["pct_frete_pi"] = df_tab["pct_frete_pi"].apply(pct)
         if "lead_time_medio" in df_tab.columns:
-            df_tab["lead_time_medio"] = df_tab["lead_time_medio"].apply(lambda x: f"{x:.0f}d" if pd.notna(x) else "—")
+            df_tab["lead_time_medio"] = df_tab["lead_time_medio"].apply(
+                lambda x: f"{x:.0f}d" if pd.notna(x) else "—"
+            )
         df_tab.columns = [c.replace("_"," ").title() for c in df_tab.columns]
         st.dataframe(df_tab, use_container_width=True, hide_index=True, height=400)
 
@@ -611,14 +685,14 @@ with tab3:
             valor_pi    = ("valor_pi", "sum"),
             n_processos = ("frete",    "count"),
         ).reset_index()
-        df_sup["pct_frete_pi"]   = df_sup["frete_total"] / df_sup["valor_pi"]
-        df_sup["frete_medio"]    = df_sup["frete_total"]  / df_sup["n_processos"]
+        df_sup["pct_frete_pi"] = df_sup["frete_total"] / df_sup["valor_pi"]
+        df_sup["frete_medio"]  = df_sup["frete_total"]  / df_sup["n_processos"]
         df_sup = df_sup.sort_values("frete_total", ascending=False)
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Fornecedores Ativos",   f"{len(df_sup):,}")
-        m2.metric("Maior Frete Total",      usd(df_sup["frete_total"].max()))
-        m3.metric("Maior % Frete/PI",       pct(df_sup["pct_frete_pi"].max()))
+        m1.metric("Fornecedores Ativos", f"{len(df_sup):,}")
+        m2.metric("Maior Frete Total",   usd(df_sup["frete_total"].max()))
+        m3.metric("Maior % Frete/PI",    pct(df_sup["pct_frete_pi"].max()))
 
         st.divider()
 
@@ -626,61 +700,94 @@ with tab3:
 
         with c1:
             st.markdown("#### Frete Total por Fornecedor")
+            st.caption("Ordenado por valor total · USD")
+            # MELHORIA: margem extra para labels não cortarem
+            _df_ft = df_sup.sort_values("frete_total", ascending=True)
+            _max_ft = _df_ft["frete_total"].max()
             fig = go.Figure(go.Bar(
-                x=df_sup["frete_total"],
-                y=df_sup["supplier"],
+                x=_df_ft["frete_total"],
+                y=_df_ft["supplier"],
                 orientation="h",
                 marker_color=ORANGE,
-                text=df_sup["frete_total"].apply(usd),
+                text=_df_ft["frete_total"].apply(usd),
                 textposition="outside",
+                cliponaxis=False,
             ))
-            fig.update_layout(template=TEMPLATE, height=400,
-                              xaxis=dict(tickformat="$,.0f"), xaxis_title="")
+            fig.update_layout(
+                template=TEMPLATE, height=max(300, len(_df_ft) * 28),
+                xaxis=dict(tickformat="$,.0f", range=[0, _max_ft * 1.40]),
+                xaxis_title="",
+                margin=dict(l=10, r=90, t=36, b=10),
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         with c2:
             st.markdown("#### % Frete / Valor PI por Fornecedor")
+            st.caption("🟢 abaixo da mediana · 🔴 acima")
+            _mediana_sup = df_sup["pct_frete_pi"].median()
             df_pct = df_sup.sort_values("pct_frete_pi", ascending=True)
+            _max_pct = df_pct["pct_frete_pi"].max()
             fig = go.Figure(go.Bar(
                 x=df_pct["pct_frete_pi"],
                 y=df_pct["supplier"],
                 orientation="h",
-                marker_color=[RED if x > df_pct["pct_frete_pi"].median() else GREEN
-                              for x in df_pct["pct_frete_pi"]],
+                marker_color=[RED if x > _mediana_sup else GREEN for x in df_pct["pct_frete_pi"]],
                 text=df_pct["pct_frete_pi"].apply(pct),
                 textposition="outside",
+                cliponaxis=False,
             ))
-            fig.update_layout(template=TEMPLATE, height=400,
-                              xaxis=dict(tickformat=".0%"), xaxis_title="")
+            fig.add_vline(x=_mediana_sup, line_dash="dot", line_color=MUTED,
+                          annotation_text=f"Mediana {pct(_mediana_sup)}",
+                          annotation_font_color=MUTED)
+            fig.update_layout(
+                template=TEMPLATE, height=max(300, len(df_pct) * 28),
+                xaxis=dict(tickformat=".0%", range=[0, _max_pct * 1.35]),
+                xaxis_title="",
+                margin=dict(l=10, r=60, t=36, b=10),
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
-        # Evolução mensal por fornecedor
+        # MELHORIA: Top N slider + highlight on hover
         st.markdown("#### Evolução Mensal do Frete por Fornecedor")
+        st.caption("Selecione o número de fornecedores para visualizar")
         if "etd" in fato.columns:
+            _top_n = st.slider("Top N fornecedores", min_value=3, max_value=15, value=6, key="top_n_evol")
+            _top_sups = (
+                fato.groupby("supplier")["frete"].sum()
+                .nlargest(_top_n).index.tolist()
+            )
+
             df_ev = fato.copy()
             df_ev["mes"] = pd.to_datetime(df_ev["etd"], errors="coerce").dt.to_period("M").astype(str)
             df_ev = df_ev.groupby(["mes","supplier"])["frete"].sum().reset_index()
-            fig = px.line(df_ev, x="mes", y="frete", color="supplier",
-                          color_discrete_sequence=[ORANGE, PURPLE, GREEN, YELLOW, BLUE, TEAL, RED],
-                          markers=True)
-            fig.update_layout(template=TEMPLATE, height=350,
-                              yaxis=dict(tickformat="$,.0f"),
-                              xaxis_title="", yaxis_title="Frete (USD)")
+            df_ev_top = df_ev[df_ev["supplier"].isin(_top_sups)]
+
+            fig = px.line(
+                df_ev_top, x="mes", y="frete", color="supplier",
+                color_discrete_sequence=[ORANGE, PURPLE, GREEN, YELLOW, BLUE, TEAL, RED],
+                markers=True,
+            )
+            fig.update_traces(line=dict(width=2.5))
+            fig.update_layout(
+                template=TEMPLATE, height=370,
+                yaxis=dict(tickformat="$,.0f"),
+                xaxis_title="", yaxis_title="Frete (USD)",
+                legend=dict(orientation="h", y=-0.25, title_text=""),
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
-        # Tabela resumo
         st.markdown("#### Resumo por Fornecedor")
-        df_tab = df_sup.copy()
-        df_tab["frete_total"]  = df_tab["frete_total"].apply(usd)
-        df_tab["frete_medio"]  = df_tab["frete_medio"].apply(usd)
-        df_tab["valor_pi"]     = df_tab["valor_pi"].apply(usd)
-        df_tab["pct_frete_pi"] = df_tab["pct_frete_pi"].apply(pct)
-        df_tab.columns = ["Fornecedor","Frete Total","Valor PI","Processos","% Frete/PI","Frete Médio/Processo"]
-        st.dataframe(df_tab, use_container_width=True, hide_index=True)
+        df_tab_sup = df_sup.copy()
+        df_tab_sup["frete_total"]  = df_tab_sup["frete_total"].apply(usd)
+        df_tab_sup["frete_medio"]  = df_tab_sup["frete_medio"].apply(usd)
+        df_tab_sup["valor_pi"]     = df_tab_sup["valor_pi"].apply(usd)
+        df_tab_sup["pct_frete_pi"] = df_tab_sup["pct_frete_pi"].apply(pct)
+        df_tab_sup.columns = ["Fornecedor","Frete Total","Valor PI","Processos","% Frete/PI","Frete Médio/Processo"]
+        st.dataframe(df_tab_sup, use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════
@@ -706,28 +813,25 @@ with tab4:
             ))
             fig.add_hline(y=media, line_dash="dot", line_color=MUTED,
                           annotation_text=f"Média {usd(media)}", annotation_font_color=MUTED)
-            _ymax_ft = df_t["frete"].max() * 1.30
             fig.update_layout(template=TEMPLATE, height=300,
-                              yaxis=dict(tickformat="$.2s", range=[0, _ymax_ft]),
+                              yaxis=dict(tickformat="$.2s", range=[0, df_t["frete"].max() * 1.30]),
                               xaxis_title="")
             st.plotly_chart(fig, use_container_width=True)
 
         with c2:
             st.markdown("#### % Frete / PI Mensal")
             if "valor_pi" in fato.columns:
-                df_pct = fato.groupby("mes").agg(
+                df_pct_t = fato.groupby("mes").agg(
                     frete=("frete","sum"), pi=("valor_pi","sum")
                 ).reset_index()
-                df_pct["pct"] = df_pct["frete"] / df_pct["pi"]
+                df_pct_t["pct"] = df_pct_t["frete"] / df_pct_t["pi"]
+                _pct_max = min(df_pct_t["pct"].quantile(0.95) * 1.5, 0.50)
                 fig = go.Figure(go.Scatter(
-                    x=df_pct["mes"], y=df_pct["pct"],
+                    x=df_pct_t["mes"], y=df_pct_t["pct"],
                     mode="lines+markers", fill="tozeroy",
                     line=dict(color=PURPLE, width=2.5),
                     fillcolor="rgba(123,108,246,0.15)",
                 ))
-                # Range fixo para evitar que pico atípico achate a série
-                _pct_med = df_pct["pct"].median()
-                _pct_max = min(df_pct["pct"].quantile(0.95) * 1.5, 0.50)
                 fig.update_layout(template=TEMPLATE, height=300,
                                   yaxis=dict(tickformat=".1%", range=[0, _pct_max]),
                                   xaxis_title="")
@@ -738,19 +842,18 @@ with tab4:
         with c3:
             st.markdown("#### Frete Médio / TEU por Mês")
             if not cont_det.empty and "etd" in cont_det.columns and "frete_cont_por_teu" in cont_det.columns:
-                df_teu = cont_det.copy()
-                df_teu["mes"] = pd.to_datetime(df_teu["etd"], errors="coerce").dt.to_period("M").astype(str)
-                df_teu = df_teu.groupby("mes")["frete_cont_por_teu"].mean().reset_index()
-                _ymax_teu = df_teu["frete_cont_por_teu"].max() * 1.30
+                df_teu_t = cont_det.copy()
+                df_teu_t["mes"] = pd.to_datetime(df_teu_t["etd"], errors="coerce").dt.to_period("M").astype(str)
+                df_teu_t = df_teu_t.groupby("mes")["frete_cont_por_teu"].mean().reset_index()
                 fig = go.Figure(go.Bar(
-                    x=df_teu["mes"], y=df_teu["frete_cont_por_teu"],
+                    x=df_teu_t["mes"], y=df_teu_t["frete_cont_por_teu"],
                     marker_color=TEAL,
-                    text=df_teu["frete_cont_por_teu"].apply(usd),
-                    textposition="outside",
-                    textfont=dict(size=9),
+                    text=df_teu_t["frete_cont_por_teu"].apply(usd),
+                    textposition="outside", textfont=dict(size=9),
                 ))
                 fig.update_layout(template=TEMPLATE, height=300,
-                                  yaxis=dict(tickformat="$,.0f", range=[0, _ymax_teu]),
+                                  yaxis=dict(tickformat="$,.0f",
+                                             range=[0, df_teu_t["frete_cont_por_teu"].max() * 1.30]),
                                   xaxis_title="", bargap=0.4)
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -767,13 +870,10 @@ with tab4:
                     marker_color=GREEN,
                     text=df_cnt["num_container"], textposition="outside",
                 ))
-                _ymax_cnt = max(df_cnt["num_container"].max() * 1.35, 10)
-                fig.update_layout(
-                    template=TEMPLATE, height=300,
-                    xaxis_title="",
-                    yaxis=dict(title="Containers", range=[0, _ymax_cnt]),
-                    bargap=0.35,
-                )
+                fig.update_layout(template=TEMPLATE, height=300,
+                                  yaxis=dict(title="Containers",
+                                             range=[0, max(df_cnt["num_container"].max() * 1.35, 10)]),
+                                  xaxis_title="", bargap=0.35)
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Execute pipeline_containers para dados de containers por mês.")
@@ -787,36 +887,35 @@ with tab5:
     st.caption("ℹ️ A busca considera **todos os anos** disponíveis na base, sem filtro de data.")
 
     col_busca, col_tipo = st.columns(2)
-
     with col_busca:
         busca = st.text_input("Buscar container ou BL", placeholder="Ex: FFAU4679971 ou GOC23031-2")
-
     with col_tipo:
         modo = st.radio("Buscar por", ["Container", "BL / Processo"], horizontal=True)
 
     if busca:
-        # Drill-through sempre usa dados RAW (sem filtro temporal) para não omitir processos
         _drill_source = cont_det_raw.copy() if not cont_det_raw.empty else cont_det.copy()
 
         if not _drill_source.empty:
             if modo == "Container" and "num_container" in _drill_source.columns:
-                df_res = _drill_source[_drill_source["num_container"].str.upper().str.contains(busca.strip().upper(), na=False)]
+                df_res = _drill_source[
+                    _drill_source["num_container"].str.upper().str.contains(busca.strip().upper(), na=False)
+                ]
             elif "ref_bl" in _drill_source.columns:
-                df_res = _drill_source[_drill_source["ref_bl"].str.upper().str.contains(busca.strip().upper(), na=False)]
+                df_res = _drill_source[
+                    _drill_source["ref_bl"].str.upper().str.contains(busca.strip().upper(), na=False)
+                ]
             else:
                 df_res = pd.DataFrame()
 
             if not df_res.empty:
-                # KPIs do resultado
                 r1, r2, r3, r4 = st.columns(4)
-                r1.metric("Processos (BLs)",        f"{len(df_res):,}")
-                r2.metric("Frete Total Container",  usd(safe(df_res, "frete_total_cont", np.mean)))
-                r3.metric("Frete / TEU",            usd(safe(df_res, "frete_cont_por_teu", np.mean)))
-                r4.metric("% Frete / PI",           pct(safe(df_res, "pct_frete_pi", np.mean)))
+                r1.metric("Processos (BLs)",       f"{len(df_res):,}")
+                r2.metric("Frete Total Container", usd(safe(df_res, "frete_total_cont", np.mean)))
+                r3.metric("Frete / TEU",           usd(safe(df_res, "frete_cont_por_teu", np.mean)))
+                r4.metric("% Frete / PI",          pct(safe(df_res, "pct_frete_pi", np.mean)))
 
                 st.divider()
 
-                # Tabela detalhe
                 cols_show = [c for c in [
                     "num_container","tipo","teu","ref_bl","supplier",
                     "etd","eta","modal","status",
@@ -825,6 +924,13 @@ with tab5:
                 ] if c in df_res.columns]
 
                 df_show = df_res[cols_show].copy()
+
+                # MELHORIA: truncar BLs concatenados
+                if "bls" in df_show.columns:
+                    df_show["bls"] = df_show["bls"].apply(
+                        lambda x: f"{len(str(x).split('|'))} BLs" if pd.notna(x) and str(x).strip() else "—"
+                    )
+
                 for c in ["frete","frete_total_cont","frete_cont_por_teu","valor_pi"]:
                     if c in df_show.columns:
                         df_show[c] = df_show[c].apply(usd)
@@ -834,33 +940,57 @@ with tab5:
 
                 df_show.columns = [c.replace("_"," ").title() for c in df_show.columns]
                 st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+                # MELHORIA: expander com BLs completos
+                with st.expander("📋 Ver BLs completos"):
+                    if "ref_bl" in df_res.columns:
+                        st.write(df_res["ref_bl"].dropna().unique().tolist())
+                    elif "bls" in cont_det_raw.columns:
+                        _cont_match = df_res["num_container"].iloc[0] if "num_container" in df_res.columns else None
+                        if _cont_match:
+                            _bls_raw = cont_det_raw[
+                                cont_det_raw["num_container"] == _cont_match
+                            ]["bls"].dropna().tolist()
+                            st.write(_bls_raw)
             else:
                 st.info(f"Nenhum resultado para '{busca}'")
         else:
-            # Fallback: busca no fato_raw (sem filtro temporal)
             _fato_busca = fato_raw if not fato_raw.empty else fato
             if "frete" in _fato_busca.columns:
-                df_res = _fato_busca[_fato_busca.apply(lambda r: busca.strip().upper() in str(r).upper(), axis=1)]
+                df_res = _fato_busca[
+                    _fato_busca.apply(lambda r: busca.strip().upper() in str(r).upper(), axis=1)
+                ]
                 if not df_res.empty:
                     st.dataframe(df_res.head(50), use_container_width=True, hide_index=True)
                 else:
-                    st.info("Nenhum resultado encontrado. Execute pipeline_containers para detalhe de containers.")
+                    st.info("Nenhum resultado. Execute pipeline_containers para detalhe de containers.")
 
     else:
-        # Resumo geral quando nenhuma busca ativa
         if not cont.empty:
             st.markdown("#### Todos os Containers — Resumo de Frete")
             df_all = cont.copy()
+
+            # MELHORIA: truncar BLs na tabela geral também
+            if "bls" in df_all.columns:
+                df_all["bls"] = df_all["bls"].apply(
+                    lambda x: f"{len(str(x).split('|'))} BLs" if pd.notna(x) and str(x).strip() else "—"
+                )
+
             for c in ["frete_total_cont","frete_por_teu"]:
                 if c in df_all.columns:
                     df_all[c] = df_all[c].apply(usd)
             if "pct_frete_pi" in df_all.columns:
                 df_all["pct_frete_pi"] = df_all["pct_frete_pi"].apply(pct)
+            if "lead_time_medio" in df_all.columns:
+                df_all["lead_time_medio"] = df_all["lead_time_medio"].apply(
+                    lambda x: f"{x:.0f}d" if pd.notna(x) else "—"
+                )
             df_all.columns = [c.replace("_"," ").title() for c in df_all.columns]
             st.dataframe(df_all, use_container_width=True, hide_index=True, height=500)
 
+
 # ══════════════════════════════════════════════
-# TAB 6 — VISÃO OPERACIONAL (dados reais)
+# TAB 6 — VISÃO OPERACIONAL
 # ══════════════════════════════════════════════
 with tab6:
     st.markdown("#### 🚢 Visão Operacional de Embarques")
@@ -872,7 +1002,6 @@ with tab6:
     else:
         _f = fato.copy()
 
-        # ── KPIs operacionais ─────────────────────────────────────────────
         _n_processos  = len(_f)
         _n_fornec     = _f["supplier"].nunique() if "supplier" in _f.columns else 0
         _teu_20       = len(cont[cont["tipo"] == "20'"]) if not cont.empty and "tipo" in cont.columns else 0
@@ -884,13 +1013,12 @@ with tab6:
         k1.metric("Processos",         f"{_n_processos:,}")
         k2.metric("Fornecedores",      f"{_n_fornec:,}")
         k3.metric("Total TEUs",        f"{_teu_total_op:,}" if _teu_total_op else "—")
-        k4.metric("Containers 20'",   f"{_teu_20:,}")
-        k5.metric("Containers 40'/HC",f"{_teu_40:,}")
+        k4.metric("Containers 20'",    f"{_teu_20:,}")
+        k5.metric("Containers 40'/HC", f"{_teu_40:,}")
         k6.metric("Frete Médio",       usd(_frete_medio))
 
         st.divider()
 
-        # ── Linha 1: Modal + Tipo Container ──────────────────────────────
         row1a, row1b = st.columns(2)
 
         with row1a:
@@ -911,8 +1039,7 @@ with tab6:
                 fig.update_layout(
                     template=TEMPLATE, height=max(180, len(_df_modal_cnt)*50),
                     xaxis=dict(range=[0, _max_x * 1.35], title="Processos"),
-                    yaxis_title="",
-                    margin=dict(l=10,r=10,t=10,b=10),
+                    yaxis_title="", margin=dict(l=10,r=10,t=10,b=10),
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -933,8 +1060,7 @@ with tab6:
                 fig.update_layout(
                     template=TEMPLATE, height=max(180, len(_df_tipo)*60),
                     xaxis=dict(range=[0, _max_x * 1.35], title="TEUs"),
-                    yaxis_title="",
-                    margin=dict(l=10,r=10,t=10,b=10),
+                    yaxis_title="", margin=dict(l=10,r=10,t=10,b=10),
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -942,7 +1068,6 @@ with tab6:
 
         st.divider()
 
-        # ── Linha 2: Top fornecedores ────────────────────────────────────
         row2a, row2b = st.columns(2)
 
         with row2a:
@@ -960,8 +1085,7 @@ with tab6:
                 fig.update_layout(
                     template=TEMPLATE, height=380,
                     xaxis=dict(range=[0, _max_x * 1.3], title="Processos"),
-                    yaxis_title="",
-                    margin=dict(l=10,r=40,t=10,b=10),
+                    yaxis_title="", margin=dict(l=10,r=40,t=10,b=10),
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -980,14 +1104,12 @@ with tab6:
                 fig.update_layout(
                     template=TEMPLATE, height=380,
                     xaxis=dict(range=[0, _max_x * 1.35], tickformat="$,.0f", title="Valor PI (USD)"),
-                    yaxis_title="",
-                    margin=dict(l=10,r=80,t=10,b=10),
+                    yaxis_title="", margin=dict(l=10,r=80,t=10,b=10),
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
-        # ── Linha 3: Lead time + Embarques por modal ─────────────────────
         row3a, row3b = st.columns(2)
 
         with row3a:
@@ -1018,8 +1140,7 @@ with tab6:
                     fig.update_layout(
                         template=TEMPLATE, height=max(180, len(_df_lt_modal)*55),
                         xaxis=dict(range=[0, _max_lt * 1.35], title="Dias"),
-                        yaxis_title="",
-                        margin=dict(l=10,r=50,t=10,b=10),
+                        yaxis_title="", margin=dict(l=10,r=50,t=10,b=10),
                     )
                     st.plotly_chart(fig, use_container_width=True)
                     st.caption("🟢 ≤25d  🟡 26–40d  🔴 >40d")
@@ -1030,6 +1151,7 @@ with tab6:
 
         with row3b:
             st.markdown("##### Processos por Embarque")
+            # MELHORIA: gradiente de intensidade por volume (uma só cor)
             _col_emb = next((c for c in ["embarque","status","situacao","etapa"] if c in _f.columns), None)
             if _col_emb:
                 _df_emb = _f[_col_emb].value_counts().reset_index()
@@ -1037,7 +1159,6 @@ with tab6:
                 _total_emb = _df_emb["count"].sum()
                 _df_emb["pct"] = _df_emb["count"] / _total_emb
 
-                # Agrupar categorias < 2% em "Outros"
                 _mask_outros = _df_emb["pct"] < 0.02
                 _df_principais = _df_emb[~_mask_outros].copy()
                 _df_outros = _df_emb[_mask_outros]
@@ -1049,7 +1170,6 @@ with tab6:
                     }])
                     _df_principais = pd.concat([_df_principais, _outros_row], ignore_index=True)
 
-                # Top 10 + Outros, ordenado desc
                 _df_principais = _df_principais.sort_values("count", ascending=True).tail(11)
                 _df_principais["label"] = _df_principais["valor"].apply(
                     lambda x: f"Embarque {x}" if str(x).isdigit() else str(x)
@@ -1058,29 +1178,28 @@ with tab6:
                     lambda r: f"{int(r['count'])} proc. | {r['pct']*100:.1f}%", axis=1
                 )
 
-                # Paleta sequencial compatível com tema dark
-                _n = len(_df_principais)
-                _palette = [ORANGE if r["valor"] == "Outros" else
-                            [BLUE, TEAL, GREEN, PURPLE, YELLOW, "#FF8C42", "#4FC3F7",
-                             "#CE93D8", "#80CBC4", "#FFF176"][i % 10]
-                            for i, r in _df_principais.iterrows()]
+                # Gradiente azul por volume (quanto maior, mais intenso)
+                _norm = _df_principais["count"] / _df_principais["count"].max()
+                _colors_grad = [
+                    f"rgba(74, 158, 255, {0.35 + 0.65 * v:.2f})" for v in _norm
+                ]
 
                 fig = go.Figure(go.Bar(
                     x=_df_principais["count"],
                     y=_df_principais["label"],
                     orientation="h",
-                    marker_color=_palette,
+                    marker_color=_colors_grad,
                     text=_df_principais["texto"],
                     textposition="outside",
                     textfont=dict(size=10, color="#C8D6F0"),
                     cliponaxis=False,
                 ))
                 _xmax = _df_principais["count"].max() * 1.55
+                _n = len(_df_principais)
                 fig.update_layout(
                     template=TEMPLATE, height=max(260, _n * 36),
                     xaxis=dict(range=[0, _xmax], title="Nº de Processos"),
-                    yaxis_title="",
-                    showlegend=False,
+                    yaxis_title="", showlegend=False,
                     margin=dict(l=10, r=10, t=10, b=10),
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -1089,7 +1208,6 @@ with tab6:
 
         st.divider()
 
-        # ── Evolução mensal — barras separadas, sem eixo duplo ────────────
         st.markdown("##### Evolução Mensal de Processos")
         _col_etd2 = "etd" if "etd" in _f.columns else "data_etd" if "data_etd" in _f.columns else None
         if _col_etd2:
@@ -1112,8 +1230,7 @@ with tab6:
                 fig1.update_layout(
                     template=TEMPLATE, height=280,
                     yaxis=dict(range=[0, _max_p * 1.25], title="Processos"),
-                    xaxis_title="", bargap=0.3,
-                    margin=dict(l=10,r=10,t=10,b=10),
+                    xaxis_title="", bargap=0.3, margin=dict(l=10,r=10,t=10,b=10),
                 )
                 st.plotly_chart(fig1, use_container_width=True)
 
@@ -1130,8 +1247,7 @@ with tab6:
                     fig2.update_layout(
                         template=TEMPLATE, height=280,
                         yaxis=dict(range=[0, _max_v * 1.25], tickformat="$,.0f", title="Valor PI (USD)"),
-                        xaxis_title="", bargap=0.3,
-                        margin=dict(l=10,r=10,t=10,b=10),
+                        xaxis_title="", bargap=0.3, margin=dict(l=10,r=10,t=10,b=10),
                     )
                     st.plotly_chart(fig2, use_container_width=True)
 
@@ -1143,7 +1259,6 @@ with tab7:
     st.markdown("#### 🎯 Inteligência de Custo de Frete")
     st.caption("Análises preditivas, alertas e oportunidades de economia")
 
-    # ── ALERTAS AUTOMÁTICOS ───────────────────────────────────────────────
     st.markdown("##### 🚨 Alertas Automáticos")
 
     alertas = []
@@ -1152,17 +1267,14 @@ with tab7:
         _df_alerta = fato.copy()
         _df_alerta["pct_ind"] = _df_alerta["frete"] / _df_alerta["valor_pi"].replace(0, np.nan)
 
-        # Alerta 1: processos com % frete acima de 15%
         _acima = _df_alerta[_df_alerta["pct_ind"] > 0.15]
         if len(_acima) > 0:
             alertas.append(("🔴", f"{len(_acima)} processo(s) com frete acima de 15% do valor da PI", "danger"))
 
-        # Alerta 2: % frete médio acima de 8%
         _media_pct = _df_alerta["pct_ind"].mean()
         if _media_pct > 0.08:
             alertas.append(("🟠", f"% Frete médio em {_media_pct*100:.1f}% — acima do benchmark de 8%", "warning"))
 
-        # Alerta 3: mês atual vs média histórica
         if "etd" in fato.columns:
             _fd = fato.copy()
             _fd["_mes"] = pd.to_datetime(_fd["etd"], errors="coerce").dt.to_period("M")
@@ -1177,8 +1289,6 @@ with tab7:
                     alertas.append(("🟢", f"Frete do último mês {abs(_variacao)*100:.0f}% abaixo da média — ótimo desempenho!", "success"))
 
     if not cont.empty and "frete_por_teu" in cont.columns:
-        # Alerta 4: container com frete/TEU anormal — usando apenas dados filtrados (>= 2025)
-        # Filtra containers com ETD >= 2025 para calcular média e desvio padrão
         _cont_filtrado = cont.copy()
         _col_etd_cont = next((c for c in ["etd_embarque","etd","data_etd"] if c in _cont_filtrado.columns), None)
         if _col_etd_cont:
@@ -1198,7 +1308,6 @@ with tab7:
                     f"— Média: {usd(_media_teu_al)} | Limiar: {usd(_media_teu_al + 2*_std_teu)}"
                 ), "danger"))
 
-        # Alerta 5: fornecedor mais caro vs mais barato
         if "supplier" in fato.columns and "frete" in fato.columns and "valor_pi" in fato.columns:
             _sup_pct = fato.groupby("supplier").apply(
                 lambda x: x["frete"].sum() / x["valor_pi"].sum() if x["valor_pi"].sum() > 0 else np.nan
@@ -1212,11 +1321,11 @@ with tab7:
     if not alertas:
         alertas.append(("🟢", "Nenhum alerta identificado — frete dentro dos parâmetros normais.", "success"))
 
-    _cores = {"danger": "#F04E4E22", "warning": "#F5B73122", "success": "#22C97B22"}
-    _bordas = {"danger": "#F04E4E", "warning": "#F5B731", "success": "#22C97B"}
+    _cores_al  = {"danger": "#F04E4E22", "warning": "#F5B73122", "success": "#22C97B22"}
+    _bordas_al = {"danger": "#F04E4E",   "warning": "#F5B731",   "success": "#22C97B"}
     for emoji, msg, nivel in alertas:
         st.markdown(
-            f'<div style="background:{_cores[nivel]};border-left:4px solid {_bordas[nivel]};'
+            f'<div style="background:{_cores_al[nivel]};border-left:4px solid {_bordas_al[nivel]};'
             f'border-radius:6px;padding:10px 14px;margin-bottom:8px;font-size:13px;color:#C8D6F0;">'
             f'{emoji} {msg}</div>',
             unsafe_allow_html=True,
@@ -1224,7 +1333,6 @@ with tab7:
 
     st.divider()
 
-    # ── ANÁLISE PREDITIVA ─────────────────────────────────────────────────
     st.markdown("##### 📈 Previsão de Frete — Próximos 3 Meses")
 
     if "etd" in fato.columns and "frete" in fato.columns:
@@ -1232,48 +1340,39 @@ with tab7:
         _fp["_mes"] = pd.to_datetime(_fp["etd"], errors="coerce").dt.to_period("M")
         _serie = _fp.groupby("_mes")["frete"].sum().reset_index()
         _serie["_mes_str"] = _serie["_mes"].astype(str)
-        _serie = _serie.sort_values("_mes").tail(18)  # últimos 18 meses
+        _serie = _serie.sort_values("_mes").tail(18)
 
         if len(_serie) >= 4:
-            # Regressão linear simples para projeção
             _x = np.arange(len(_serie))
             _y = _serie["frete"].values
             _coef = np.polyfit(_x, _y, 1)
             _poly = np.poly1d(_coef)
 
-            # Projetar 3 meses à frente
-            _last_period = _serie["_mes"].iloc[-1]
+            _last_period  = _serie["_mes"].iloc[-1]
             _future_periods = [(_last_period + i).strftime("%Y-%m") for i in range(1, 4)]
             _future_x = np.arange(len(_serie), len(_serie) + 3)
-            _future_y = _poly(_future_x)
-            _future_y = np.maximum(_future_y, 0)
-
-            _trend_y = _poly(_x)
+            _future_y = np.maximum(_poly(_future_x), 0)
+            _trend_y  = _poly(_x)
 
             fig_pred = go.Figure()
-            # Histórico
             fig_pred.add_trace(go.Bar(
                 x=_serie["_mes_str"], y=_serie["frete"],
                 name="Histórico", marker_color=ORANGE, opacity=0.85,
             ))
-            # Linha de tendência
             fig_pred.add_trace(go.Scatter(
                 x=_serie["_mes_str"], y=_trend_y,
                 name="Tendência", mode="lines",
                 line=dict(color=BLUE, width=2, dash="dot"),
             ))
-            # Projeção
             fig_pred.add_trace(go.Bar(
                 x=_future_periods, y=_future_y,
                 name="Projeção", marker_color=PURPLE, opacity=0.7,
             ))
-            # Anotação nos valores projetados
             for _fp_date, _fp_val in zip(_future_periods, _future_y):
                 fig_pred.add_annotation(
                     x=_fp_date, y=_fp_val, text=usd(_fp_val),
                     showarrow=False, yshift=14, font=dict(size=10, color=PURPLE),
                 )
-
             fig_pred.update_layout(
                 template=TEMPLATE, height=350,
                 yaxis=dict(tickformat="$,.0f"), xaxis_title="",
@@ -1289,16 +1388,14 @@ with tab7:
 
     st.divider()
 
-    # ── MAPA DE CALOR: FRETE POR FORNECEDOR × MÊS ────────────────────────
     st.markdown("##### 🗓️ Heatmap — Frete por Fornecedor × Mês")
 
     if "etd" in fato.columns and "supplier" in fato.columns and "frete" in fato.columns:
         _hf = fato.copy()
         _hf["_mes"] = pd.to_datetime(_hf["etd"], errors="coerce").dt.to_period("M").astype(str)
-        _pivot = _hf.groupby(["supplier", "_mes"])["frete"].sum().unstack(fill_value=0)
-        # Ordenar por frete total desc, pegar top 12 fornecedores
+        _pivot = _hf.groupby(["supplier","_mes"])["frete"].sum().unstack(fill_value=0)
         _pivot = _pivot.loc[_pivot.sum(axis=1).nlargest(12).index]
-        _pivot = _pivot[sorted(_pivot.columns)[-18:]]  # últimos 18 meses
+        _pivot = _pivot[sorted(_pivot.columns)[-18:]]
 
         fig_heat = go.Figure(go.Heatmap(
             z=_pivot.values,
@@ -1321,20 +1418,19 @@ with tab7:
 
     st.divider()
 
-    # ── RANKING DE ECONOMIA ───────────────────────────────────────────────
     st.markdown("##### 💰 Ranking de Oportunidades de Economia")
-    st.caption("Fornecedores/rotas onde o % frete está acima da mediana — potencial de renegociação")
+    st.caption("Fornecedores onde o % frete está acima da mediana — potencial de renegociação")
 
     if "supplier" in fato.columns and "frete" in fato.columns and "valor_pi" in fato.columns:
         _df_eco = fato.groupby("supplier").agg(
-            frete_total=("frete", "sum"),
-            pi_total=("valor_pi", "sum"),
-            n_processos=("frete", "count"),
+            frete_total=("frete",    "sum"),
+            pi_total   =("valor_pi", "sum"),
+            n_processos=("frete",    "count"),
         ).reset_index()
-        _df_eco["pct_frete"] = _df_eco["frete_total"] / _df_eco["pi_total"].replace(0, np.nan)
-        _mediana = _df_eco["pct_frete"].median()
-        _df_eco["excesso_pct"] = (_df_eco["pct_frete"] - _mediana).clip(lower=0)
-        _df_eco["economia_pot"] = _df_eco["excesso_pct"] * _df_eco["pi_total"]
+        _df_eco["pct_frete"]   = _df_eco["frete_total"] / _df_eco["pi_total"].replace(0, np.nan)
+        _mediana_eco           = _df_eco["pct_frete"].median()
+        _df_eco["excesso_pct"] = (_df_eco["pct_frete"] - _mediana_eco).clip(lower=0)
+        _df_eco["economia_pot"]= _df_eco["excesso_pct"] * _df_eco["pi_total"]
         _df_eco = _df_eco[_df_eco["economia_pot"] > 0].sort_values("economia_pot", ascending=False).head(10)
 
         if not _df_eco.empty:
@@ -1356,12 +1452,11 @@ with tab7:
             )
             st.plotly_chart(fig_eco, use_container_width=True)
 
-            # Tabela resumo
-            _df_show = _df_eco[["supplier","n_processos","pct_frete","economia_pot"]].copy()
-            _df_show["pct_frete"]    = _df_show["pct_frete"].apply(pct)
-            _df_show["economia_pot"] = _df_show["economia_pot"].apply(usd)
-            _df_show.columns = ["Fornecedor", "Processos", "% Frete Atual", "Economia Potencial"]
-            st.dataframe(_df_show, use_container_width=True, hide_index=True)
+            _df_show_eco = _df_eco[["supplier","n_processos","pct_frete","economia_pot"]].copy()
+            _df_show_eco["pct_frete"]    = _df_show_eco["pct_frete"].apply(pct)
+            _df_show_eco["economia_pot"] = _df_show_eco["economia_pot"].apply(usd)
+            _df_show_eco.columns = ["Fornecedor","Processos","% Frete Atual","Economia Potencial"]
+            st.dataframe(_df_show_eco, use_container_width=True, hide_index=True)
         else:
             st.success("Todos os fornecedores estão abaixo da mediana de % frete. 🎉")
     else:
