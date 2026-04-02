@@ -546,19 +546,20 @@ with tab2:
                 _vals = _df_hist["frete_total_cont"].values
                 _mediana_hist = np.median(_vals)
 
-                # KDE manual com numpy
-                from scipy.stats import gaussian_kde as _kde  # type: ignore
+                # KDE manual com numpy (sem scipy)
                 try:
-                    _kde_fn  = _kde(_vals)
                     _x_range = np.linspace(_vals.min(), _vals.max(), 200)
-                    _kde_y   = _kde_fn(_x_range)
-                    # Escala KDE para ficar visível junto das barras do histograma
-                    _nbins   = 20
-                    _bin_w   = (_vals.max() - _vals.min()) / _nbins
+                    _h = 1.06 * _vals.std() * len(_vals) ** (-1/5)  # bandwidth Silverman
+                    _kde_y = np.array([
+                        np.mean(np.exp(-0.5 * ((xi - _vals) / _h) ** 2) / (_h * np.sqrt(2 * np.pi)))
+                        for xi in _x_range
+                    ])
+                    _nbins = 20
+                    _bin_w = (_vals.max() - _vals.min()) / _nbins
                     _kde_y_scaled = _kde_y * len(_vals) * _bin_w
-                    has_kde  = True
+                    has_kde = True
                 except Exception:
-                    has_kde  = False
+                    has_kde = False
 
                 fig = go.Figure()
                 fig.add_trace(go.Histogram(
